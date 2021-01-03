@@ -17,6 +17,7 @@ library(echarts4r)
 library(gapminder)
 library(rsconnect)
 library(devtools)
+library(scales)
 
 # Reading in Political Terror Scale data (which I have saved in my Github repo)
 data <- data.table::fread("https://raw.githubusercontent.com/akrishnamurthy97/Political-Terror-Scale/main/PTS-2020.csv")
@@ -44,12 +45,15 @@ levels(data$Region) <-
   )
 regions <- prepend(sort(unique(as.character(data$Region))), "All")
 
+# Get full list of countries
+countries <- sort(unique(as.character(data$Country)))
 
 
-ui <- dashboardPage(dashboardHeader(),
+ui <- dashboardPage(dashboardHeader(title = "PTS Dashboard"),
                     dashboardSidebar(sidebarMenu(
                       menuItem("World Map", tabName = "worldmap"),
-                      menuItem("Charts", tabName = "charts")
+                      menuItem("Global Overview", tabName = "charts"),
+                      menuItem("Country Drilldown", tabName = "country")
                     )),
                     dashboardBody(tabItems(
                       tabItem(tabName = "worldmap",
@@ -65,6 +69,13 @@ ui <- dashboardPage(dashboardHeader(),
                                 tabPanel("Trends over Time (Smoothed)",
                                          uiOutput("smoothness"),
                                          plotlyOutput("trends_smoothed", height = 800), width = 12),
+                                width = 12
+                              ))),
+                      tabItem(tabName = "country",
+                              uiOutput("country_selections"),
+                              fluidRow(tabBox(
+                                tabPanel("Country Scores over Time", plotlyOutput("country_chart", height = 800), width = 12),
+                                tabPanel("Summary Table", reactableOutput("country_table", height = 800), width = 12),
                                 width = 12
                               )))
                     )))
@@ -106,6 +117,8 @@ server <- function(input, output) {
   # generate world map
   output$map <- renderEcharts4r({
     
+    req(input$report)
+    
     world_map <- get_PTS_data()
     
     world_map %>%
@@ -113,7 +126,7 @@ server <- function(input, output) {
       e_charts(Country, timeline = TRUE) %>%
       e_map(value) %>%
       e_visual_map(value) %>%
-      e_title("Political Terror Scale by Country and Year", left = "center") %>%
+      e_title(paste0("Political Terror Scale by Country and Year (", input$report, ")"), left = "center") %>%
       e_timeline_opts(
         playInterval = 200
       ) %>%
@@ -166,6 +179,8 @@ server <- function(input, output) {
           filter(., !is.na(value)) else filter(.)
       }
     
+    chart_data_values$value <- as.factor(chart_data_values$value)
+    
     return(chart_data_values)
     
   })
@@ -174,6 +189,7 @@ server <- function(input, output) {
   output$chart <- renderPlotly({
     
     req(input$year_range)
+    req(input$region)
     
     chart_data <- chart_data_values() %>%
       group_by(Year, `Report Type`, value) %>%
@@ -183,10 +199,24 @@ server <- function(input, output) {
       ggplot(chart_data,
              aes(fill = value,
                  x = Year,
-                 y = Count)) + geom_bar(position = "fill", stat = "identity") + facet_wrap( ~ `Report Type`) + 
-      xlim(input$year_range[1], input$year_range[2])
+                 y = Count,
+                 text = paste(
+                   "<br> Region: ",
+                   input$region,
+                   "<br> Year: ",
+                   Year,
+                   "<br> Count: ",
+                   Count
+                 ))) + geom_bar(position = "fill", stat = "identity") + facet_wrap( ~ `Report Type`) + 
+      scale_x_continuous(
+        limits = c(input$year_range[1] - 1, input$year_range[2] + 1),
+        labels = scales::number_format(accuracy = 1, big.mark = ""),
+        breaks = scales::pretty_breaks()
+      ) +
+      scale_y_continuous(labels = percent_format(accuracy = 0.1L)) + 
+      theme(axis.title.y = element_blank())
     
-    return(ggplotly(graph))
+    return(ggplotly(graph, tooltip = "text"))
     
   })
   
@@ -194,8 +224,10 @@ server <- function(input, output) {
   output$trends <- renderPlotly({
     
     req(input$year_range)
+    req(input$region)
     
     chart_data <- chart_data_values() %>%
+      mutate(value = as.numeric(value)) %>%
       group_by(Year, `Report Type`) %>%
       summarise("Mean PTS Score" = mean(value, na.rm = TRUE))
     
@@ -204,9 +236,23 @@ server <- function(input, output) {
              aes(x = Year,
                  y = `Mean PTS Score`,
                  group = `Report Type`,
-                 color = `Report Type`)) + geom_line() + geom_point() + xlim(input$year_range[1], input$year_range[2])
+                 color = `Report Type`,
+                 text = paste(
+                   "<br> Region: ",
+                   input$region,
+                   "<br> Year: ",
+                   Year,
+                   "<br> Mean PTS Score: ",
+                   formatC(`Mean PTS Score`, digits = 2, format = "f")
+                 ))) + geom_line() + geom_point() + 
+      scale_x_continuous(
+        limits = c(input$year_range[1] - 1, input$year_range[2] + 1),
+        labels = scales::number_format(accuracy = 1, big.mark = ""),
+        breaks = scales::pretty_breaks()
+      ) +
+      scale_y_continuous(labels = number_format(accuracy = 0.1)) + ylab("Mean PTS Score")
     
-    return(graph)
+    return(ggplotly(graph, tooltip = "text"))
     
   })
   
@@ -226,12 +272,15 @@ server <- function(input, output) {
     
   })
   
+  # generate smoothed chart
   output$trends_smoothed <- renderPlotly({
     
     req(input$year_range)
     req(input$smoothness)
+    req(input$region)
     
     chart_data <- chart_data_values() %>%
+      mutate(value = as.numeric(value)) %>%
       group_by(Year, `Report Type`) %>%
       summarise("Mean PTS Score" = mean(value, na.rm = TRUE))
     
@@ -242,20 +291,198 @@ server <- function(input, output) {
           x = Year,
           y = `Mean PTS Score`,
           group = `Report Type`,
-          color = `Report Type`
+          color = `Report Type`,
+          text = paste(
+            "<br> Region: ",
+            input$region,
+            "<br> Year: ",
+            Year,
+            "<br> Mean PTS Score: ",
+            `Mean PTS Score`
+          )
         )
-      ) + geom_smooth(
+      ) + geom_point() +
+      geom_smooth(
         method = "loess",
         span = input$smoothness,
         alpha = 0.3,
         size = 0.7
-      ) + xlim(input$year_range[1], input$year_range[2])
+      ) + 
+      scale_x_continuous(
+        limits = c(input$year_range[1] - 1, input$year_range[2] + 1),
+        labels = scales::number_format(accuracy = 1, big.mark = ""),
+        breaks = scales::pretty_breaks()
+      ) + scale_y_continuous(labels = number_format(accuracy = 0.1))
     
-    return(graph)
+    return(ggplotly(graph, tooltip = "text"))
     
   })
   
-  # reactable table with expandable rows for list of countries
+  # generate UI for Country tab
+  output$country_selections <- renderUI({
+    tagList(
+      selectInput(
+        "country",
+        "Select a country: ",
+        choices = countries,
+        selected = "China"
+      ),
+      radioButtons(
+        "show_regional_or_world_averages",
+        "Show regional or world average PTS scores by report type: ",
+        choices = c("Region" = "Region", "World" = "World", "None" = "None"),
+        selected = "None"
+      ),
+      sliderInput(
+        "year_range_country",
+        "Select time range to be displayed:",
+        min = 1976,
+        max = 2019,
+        value = c(2010, 2019),
+        sep = "",
+        dragRange = TRUE
+      )
+    )
+    
+  })
+  
+  # enerate data for country chart
+  country_data_values <- reactive({
+
+    req(input$country)
+    req(input$show_regional_or_world_averages)
+
+    country_data_values <- data
+    selected_country_region <-
+      as.character(unique(country_data_values$Region[match(input$country, country_data_values$Country)]))
+
+    if (input$show_regional_or_world_averages == "Region") {
+      country_data_values <- filter(country_data_values, Region == selected_country_region)
+    }
+
+    return(country_data_values)
+
+  })
+  
+  # generate plotly chart
+  output$country_chart <- renderPlotly({
+    
+    req(input$year_range_country)
+    req(input$country)
+    req(input$show_regional_or_world_averages)
+    
+    chart_data <- country_data_values() %>%
+      group_by(Year, `Report Type`) 
+    
+    more_countries <- chart_data %>%
+      group_by(Year, `Report Type`) %>%
+      summarise("Mean PTS Score" = mean(value, na.rm = TRUE))
+    
+    graph <-
+      ggplot() + geom_point(
+        data = chart_data[chart_data$Country == input$country,], # limiting data to selected country
+        aes(
+          x = Year,
+          y = value,
+          group = `Report Type`,
+          color = `Report Type`,
+          text = paste(
+            "<br> Country: ",
+            Country,
+            "<br> Region: ",
+            Region,
+            "<br> Year: ",
+            Year,
+            "<br> PTS Score: ",
+            formatC(value, digits = 0, format = "f")
+          )
+        ),
+        position = position_jitter(h = 0.05, w = 0.05),
+        shape = 15,
+        alpha = 0.8,
+        size = 3
+      ) + 
+      scale_x_continuous(
+        limits = c(input$year_range_country[1] - 1, input$year_range_country[2] + 1),
+        labels = scales::number_format(accuracy = 1, big.mark = ""),
+        breaks = scales::pretty_breaks()
+      ) +
+      scale_y_continuous(labels = number_format(accuracy = 0.1)) + ylab("PTS Score")
+    
+    if (input$show_regional_or_world_averages != "None") { # adding in regional or world averages
+      graph <-
+        graph + geom_smooth(
+          data = more_countries,
+          aes(
+            x = Year,
+            y = `Mean PTS Score`,
+            group = `Report Type`,
+            color = `Report Type`,
+            text = paste(
+              "<br> Report Type: ",
+              `Report Type`,
+              "<br> Year: ",
+              Year,
+              "<br> PTS Score: ",
+              formatC(`Mean PTS Score`, digits = 2, format = "f")
+            )
+          ),
+          size = 1,
+          method = "loess",
+          se = TRUE
+        )
+    }
+    
+    return(ggplotly(graph, tooltip = "text"))
+    
+  })
+  
+  # generate summary table
+  summary_table <- reactive({
+    
+    req(input$country)
+    req(input$year_range_country)
+    
+    table_data <- chart_data_values() %>%
+      filter(Country == input$country, Year %in% input$year_range_country)
+    
+    summary_table <-
+      data.frame(input$country = c(
+        "Mean",
+        "Median",
+        "Standard Deviation",
+        "Min",
+        "Max",
+        "Observations"
+      ))
+    
+    reports <- c("Amnesty International", "Human Rights Watch", "U.S. State Department", "All")
+    
+    for (report in reports) {
+      filtered_data <- table_data
+      if (report != "All") {
+        filtered_data <- filter(table_data, `Report Type` == report)
+      }
+      mean <- mean(filtered_data$value, na.rm = TRUE)
+      median <- median(filtered_data$value, na.rm = TRUE)
+      ssd <- sd(filtered_data$value, na.rm = TRUE)
+      min <- min(filtered_data$value, na.rm = TRUE)
+      max <- min(filtered_data$value, na.rm = TRUE)
+      obs <- nrow(filtered_data)
+      summary_table[, paste0(report)] <- c(mean, median, ssd, min, max, obs)
+    }
+    
+    return(summary_table)
+    
+  })
+  
+  # output summary table
+  output$country_table <- renderReactable({
+    
+    reactable(summary_table())
+    
+  })
+  
   
 }
 
