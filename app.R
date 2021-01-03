@@ -443,11 +443,11 @@ server <- function(input, output) {
     req(input$country)
     req(input$year_range_country)
     
-    table_data <- chart_data_values() %>%
-      filter(Country == input$country, Year %in% input$year_range_country)
+    table_data <- country_data_values() %>%
+      filter(Country == input$country, Year >= input$year_range_country[1], Year <= input$year_range_country[2])
     
     summary_table <-
-      data.frame(input$country = c(
+      data.frame("Country" = c(
         "Mean",
         "Median",
         "Standard Deviation",
@@ -463,12 +463,12 @@ server <- function(input, output) {
       if (report != "All") {
         filtered_data <- filter(table_data, `Report Type` == report)
       }
-      mean <- mean(filtered_data$value, na.rm = TRUE)
-      median <- median(filtered_data$value, na.rm = TRUE)
-      ssd <- sd(filtered_data$value, na.rm = TRUE)
-      min <- min(filtered_data$value, na.rm = TRUE)
-      max <- min(filtered_data$value, na.rm = TRUE)
-      obs <- nrow(filtered_data)
+      mean <- formatC(mean(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
+      median <- formatC(median(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
+      ssd <- formatC(sd(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
+      min <- formatC(min(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
+      max <- formatC(min(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
+      obs <- formatC(nrow(filtered_data), digits = 0, format = "f")
       summary_table[, paste0(report)] <- c(mean, median, ssd, min, max, obs)
     }
     
@@ -479,7 +479,7 @@ server <- function(input, output) {
   # output summary table
   output$country_table <- renderReactable({
     
-    reactable(summary_table())
+    reactable(summary_table(), defaultColDef = colDef(minWidth = 100))
     
   })
   
