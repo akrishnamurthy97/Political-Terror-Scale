@@ -1,16 +1,11 @@
 
-
 library(shiny)
 library(shinydashboard)
 library(data.table)
 library(ggplot2)
-library(ggiraph)
 library(reshape2)
-library(rnaturalearth)
 library(reactable)
-library(sf)
 library(plotly)
-library(rgeos)
 library(dplyr)
 library(tidyverse)
 library(echarts4r)
@@ -18,6 +13,7 @@ library(gapminder)
 library(rsconnect)
 library(devtools)
 library(scales)
+
 
 # Reading in Political Terror Scale data (which I have saved in my Github repo)
 data <- data.table::fread("https://raw.githubusercontent.com/akrishnamurthy97/Political-Terror-Scale/main/PTS-2020.csv")
@@ -214,7 +210,8 @@ server <- function(input, output) {
         breaks = scales::pretty_breaks()
       ) +
       scale_y_continuous(labels = percent_format(accuracy = 0.1L)) + 
-      theme(axis.title.y = element_blank())
+      theme(axis.title.y = element_blank()) +
+      ggtitle("Proportion of Reports of Each Score over Time")
     
     return(ggplotly(graph, tooltip = "text"))
     
@@ -407,7 +404,7 @@ server <- function(input, output) {
         labels = scales::number_format(accuracy = 1, big.mark = ""),
         breaks = scales::pretty_breaks()
       ) +
-      scale_y_continuous(labels = number_format(accuracy = 0.1)) + ylab("PTS Score")
+      scale_y_continuous(labels = number_format(accuracy = 0.1)) + ylab("PTS Score") + ylim(0, 5)
     
     if (input$show_regional_or_world_averages != "None") { # adding in regional or world averages
       graph <-
@@ -468,7 +465,7 @@ server <- function(input, output) {
       ssd <- formatC(sd(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
       min <- formatC(min(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
       max <- formatC(min(filtered_data$value, na.rm = TRUE), digits = 2, format = "f")
-      obs <- formatC(nrow(filtered_data), digits = 0, format = "f")
+      obs <- formatC(length(na.omit(filtered_data$value)), digits = 0, format = "f")
       summary_table[, paste0(report)] <- c(mean, median, ssd, min, max, obs)
     }
     
